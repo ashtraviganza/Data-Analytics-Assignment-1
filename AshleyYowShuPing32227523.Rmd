@@ -1,0 +1,769 @@
+---
+title: "FIT3152 Assignment 1"
+author: "Ashley Yow Shu Ping 32227523"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+**Defining libraries**
+``` {r libraries, result="hide"}
+library(ggplot2)
+library(tidyr)
+library(dplyr)
+library(reshape2) #the use of melt()
+library(cluster) #for k-means clustering
+library(factoextra) #for cluster plot
+```
+
+##### **Question 1**
+
+**Reading the data from the CSV file**
+
+```{r readfile}
+rm(list = ls())
+set.seed(32227523)  
+cvbase = read.csv("PsyCoronaBaselineExtract.csv")
+cvbase <- cvbase[sample(nrow(cvbase), 40000), ]
+```
+
+**Descriptive analysis on the data**
+
+Dimension of the data: There are 40000 rows and 54 columns in this data set. A
+summary of the data set is also generated to have a general overview of each
+attribute.
+```{r dimensions_summary, results="hide"}
+dim(cvbase)
+summary (cvbase)
+```
+
+As for the analysis of data types, the data set is of type list, and there
+are two different data types within the list itself, where all attributes except
+coded_country (is of type character) belong to the integer data type. From 
+here we can clearly conclude that out of 54 attributes that exists in the data 
+set, only 1 attribute (coded_country) is a non-numerical attribute, whilst the 
+remaining 53 attributes appear to be numerical attributes.
+```{r datatype, results='hide'}
+typeof(cvbase)
+str(cvbase)
+```
+
+The distribution of numerical attributes is represented as bar graphs in small
+multiples. According to the bar charts, negative affects such as Anxious, Bored,
+Depressed, Nervous and Exhausted are mostly positively skewed. AffDepr was the
+most positively skewed, which means majority of people who participated in the 
+survey are very slightly or not at all depressed during the early stages of the
+pandemic. As for positive affects, Calm, Content and Relaxed are close to being
+symmetrically skewed, which depicts many feeling rather neutral in these 
+emotions. Affects like Energetic, Excited and Inspired are rather positively
+skewed, very little people feeling energetic and inspired, and the majority felt
+very slightly or not at all excited. The survey is responded by mostly adults
+aged between 25 to 34, and those who are aged above 85 contribute the least
+responses. Most participants of the survey received a Bachelors Degree as their
+highest qualification. In terms of the Corona Community Injunctive Norms, all 
+attributes are negatively skewed except for c19IsPunish, where c19NormShould is 
+the most negatively skewed. It showed that the majority strongly agrees that 
+people in their area should self-isolate and engage in social distancing. As for
+c19IsPunish, it is closer to being symmetrically skewed, many believe that their 
+community punishes those who deviate from the rules and puts them into place
+at a moderate frequency (4 on a scale of 1 to 6, with 1 being not at all and 6 
+represents very much). Oberserving the attributes for societal discontent, disc1
+and disc2 are negatively skewed, and disc3 is rather symmetrically skewed. The
+graphs show that people agree that things will go wrong in society and are
+concerned for the future of society. People, too, disagree to the statement of 
+being satisfied with society. Most people are employed and working 40 or more 
+hours per week, while the least of the population are disabled and not able to
+work. All Corona Pro-Social Behaviours graphs are negatively skewed, which shows
+that a big part of the population are willing to be helpful and considerate
+towards others to help ease the pandemic and the people who have been affected.
+There are more male responders than female, and a small group of other genders.
+fail01, happy, PLRAC19, PLRAEco, trustGovCtry, and trustGovState are attributes
+that display a close to symmetrically skewed pattern. fail02, jbInsec01, jbInsec04
+and PFS03 all show patterns of being positively skewed, whereas fail03, jbInsec02,
+lifeSat, MLQ and PFS02 are all negatively skewed.
+
+```{r distribution_of_attr}
+#making a temp data frame that only has all numerical attributes
+df = select(cvbase, -c(coded_country))
+#plotting the attributes
+df %>%
+  pivot_longer(affAnx:c19ProSo04, names_to = "attribute", values_to = "response") %>%
+  ggplot(aes(x = response)) +
+  geom_bar(fill="coral", color="black") +
+  facet_wrap(vars(attribute), ncol = 8) +
+  labs(x = "Scale of Responses", y = "Frequency")
+```
+
+There is a total of 426718 missing values (NA) in this data set. Among the total
+number of missing values, the attribute employstatus_8 has the most value of NA
+which is 39265 records.
+```{r missingvaluecount}
+sum(is.na(cvbase))
+#searching for the attribute with the most missing values
+max_missingval = 0
+max_index = 0
+for(i in 1:ncol(cvbase)) {
+  if (max_missingval < sum(is.na(cvbase[,i]))){
+    max_missingval = sum(is.na(cvbase[,i]))
+    max_index = i
+  }
+}
+print(colnames(cvbase[max_index]))
+print(max_missingval)
+```
+
+There are a total of 110 locations/countries (including unspecified locations) 
+that participated in this survey from the sampled data set.
+```{r countries_participated}
+unique(cvbase$coded_country)
+length(unique(cvbase$coded_country))
+```
+
+**Pre-processing the data file**
+
+Rows with most NA are removed to simplify further analysis, the number 27 was 
+chosen as there are a total of 54 attributes, and at least half of the
+attributes are to have data in a record for it to give sufficient data. Records 
+without a specified country is also removed. Since the employstatus attribute 
+each have NA values close to the number of records (viewed from summary of cvbase), 
+the columns will be dropped to prevent potential problems in modelling and prediction.
+```{r removeNA_and_missingvalues}
+clean_cvbase = cvbase[rowSums(is.na(cvbase)) < 27, ]
+clean_cvbase = clean_cvbase[(clean_cvbase$coded_country != ""),]
+clean_cvbase = select(clean_cvbase, -c(employstatus_1, employstatus_2, employstatus_3,
+                                       employstatus_4, employstatus_5,employstatus_6,
+                                       employstatus_7, employstatus_8, employstatus_9,
+                                       employstatus_10))
+```
+
+Renumbering the row indexes
+```{r index_renumbering}
+rownames(clean_cvbase) <- 1:nrow(clean_cvbase)
+```
+
+##### **Question 2**
+
+###### **2(a)**
+
+**Focus country: Italy**
+
+**Grouping the data by focus country and other countries**
+```{r grouping}
+focuscountry_data <- clean_cvbase[(clean_cvbase$coded_country == "Italy"),]
+rownames(focuscountry_data) <- 1:nrow(focuscountry_data)
+othercountries_data <- clean_cvbase[(clean_cvbase$coded_country != "Italy"),]
+rownames(othercountries_data) <- 1:nrow(othercountries_data)
+```
+
+**Plotting out the distribution in attributes for both groups to observe differences**
+
+Based on the chart depicting the responses of the two groups, in terms of how
+affected people were, citizens of Italy expressed great discontent in comparison
+to the rest of the world, with their response to that affect mostly being very 
+slightly or not at all Content, whereas the majority of citizens from other 
+countries felt moderately content. In Italy, more people appear to be very 
+slightly or not at all calm than quite a bit calm, whereas people in other
+countries are the contrary. In Italy, there are more people who feel uninspired 
+at all than moderately inspired, whereas people in other countries are more
+moderately inspired than totally uninspired.There appears to be some respondents 
+aged between 65 to 75 in Italy, more in amount in relative comparison to other 
+countries, but no one from the age group 85 and above responded the survey whereas 
+in other countries, there appears to be a small group of elderly of that age. 
+As for pro social behaviours, more citizens of Italy stand neutral when it comes
+to their willingness to help others who suffer from the virus than to be somewhat
+agreeing to this idea. In other countries, more people somewhat agree on helping
+others who are suffering from the pandemic than not having an opinion about it
+at all. The same pattern of observation can be made with c19ProSo02, with more 
+people in Italy neither agree or disagree to be willing to make donations to those
+who suffer from Coronavirus than to somewhat agree to it, and vice versa for
+the people outside of Italy. As for the willingness to make personal sacrifices
+to prevent the spread of the Coronavirus, the majority of Italians are strongly
+willing to do so, in comparison to the majority in the other countries. The 
+respondents of the survey in Italy have reached higher education as their highest
+level of education, whereas the majority of others in the world have received a 
+bachelors degree. In Italy, most people do not have an opinion on whether or not
+their group is worst off in this pandemic compared to other people in the same 
+country, whilst the majority in other countries have mostly disagreed with this
+statement. Looking into job insecurities, most people in other countries feel 
+pretty certain of their job security, and the majority in Italy stand neutral
+in believing whether or not they might lose their job. In terms of the aspect of
+perceived financial strain, the majority of people in Italy do not think they
+are particularly strained nor not strained financially. Hence, they also stand
+neutral on whether or not they find it difficult to pay for expenses. However, 
+most people in other countries agree that they are financially strained, but
+expressed otherwise when it comes to the ability to pay for expenses. 
+```{r plotting}
+#drop the column coded_country as it serves no purpose for graph plotting and comparisons
+focuscountry_data = select(focuscountry_data, -c(coded_country))
+othercountries_data = select(othercountries_data, -c(coded_country))
+
+#plot small multiples of bar charts for focus country data
+focuscountry_data %>%
+  pivot_longer(affAnx:c19ProSo04, names_to = "attribute", values_to = "response") %>%
+  ggplot(aes(x = response)) +
+  geom_bar(fill="cyan", color="black") +
+  facet_wrap(vars(attribute), ncol = 8) +
+  labs(x = "Scale of Responses", y = "Frequency") +
+  ggtitle("Italy Corona Baseline Survey Response")
+
+#plot small multiples of bar charts for other countries data
+othercountries_data %>%
+  pivot_longer(affAnx:c19ProSo04, names_to = "attribute", values_to = "response") %>%
+  ggplot(aes(x = response)) +
+  geom_bar(fill="magenta", color="black") +
+  facet_wrap(vars(attribute), ncol = 8) +
+  labs(x = "Scale of Responses", y = "Frequency") +
+  ggtitle("Other Countries Corona Baseline Survey Response")
+```
+
+###### **2(b)**
+
+**Analysing how well participants responses in Italy predict c19ProSo01**
+
+c19ProSo01 collects the information on how willing people are to help others who
+suffer from Coronavirus. According to the summary of the fitted model using
+linear regression, jbInsec02 and c19NormShould appears to be the best predictors 
+for this pro social behaviour due to having the lowest p-values among the rest 
+of the potential predictors. c19NormDo, c19IsOrg, gender and edu seem like 
+potential predictors too (because a p-value lower than 0.05), but we would barely 
+have enough evidence to prove of them being strong predictors. A correlation heat 
+map is plotted to spot for attributes with potential relationships with each other.
+The predictors above are shown to have greater relationship compared to the rest
+as well. 
+
+```{r focuscountry_pro1}
+#create data sets with only the predictors and one pro-social attribute each for linear modelling
+focuscountry_pro1 = select(focuscountry_data, -c(c19ProSo02, c19ProSo03, c19ProSo04))
+#create a linear regression model for all pro-social attr
+italy1.fit <-lm(c19ProSo01 ~ ., data = focuscountry_pro1, na.action = na.exclude)
+#check for significant predictors for all pro-social attitude attributes
+summary(italy1.fit)
+#plotting a correlation heatmap for c19ProSo01
+focus.cor1 = as.table(round(cor(focuscountry_pro1[1:40], 
+                                    use = "pairwise.complete.obs"), digit = 2))
+focus.cor1 = melt(focus.cor1) #convert table into long format
+heatmap1 = ggplot(data = focus.cor1, aes(x=Var1, y=Var2, fill=value))
+heatmap1 = heatmap1 + 
+  geom_tile(color = "white") + 
+  scale_fill_gradient(low = "blue", high = "red")
+
+heatmap1
+```
+
+**Analysing how well participants responses in Italy predict c19ProSo02**
+
+c19ProSo02 collects the information on how willing people are to make donations
+to help others who suffer from Coronavirus. According to the summary of the 
+fitted model using linear regression, PFS01 and c19NormShould appears to be the 
+best predictors for this pro social behaviour due to having the lowest p-values 
+among the rest of the potential predictors. jbInsec02, jbInsec03 and fail02 seem 
+like potential predictors too (because a p-value lower than 0.05), but we would 
+barely have enough evidence to prove of them being strong predictors. According 
+to the correlation heatmap, PFS01 has a negative correlation to c19ProSo02, and
+c19NormShould has a positive correlation to c19ProSo02.
+
+```{r focuscountry_pro2}
+#create datasets with only the predictors and one pro-social attribute each for linear modelling
+focuscountry_pro2 = select(focuscountry_data, -c(c19ProSo01, c19ProSo03, c19ProSo04))
+#create a linear regression model for all pro-social attr
+italy2.fit <-lm(c19ProSo02 ~ ., data = focuscountry_pro2, na.action = na.exclude)
+#check for significant predictors for all pro-social attitude attributes
+summary(italy2.fit)
+#plotting a correlation heatmap for c19ProSo02
+focus.cor2 = as.table(round(cor(focuscountry_pro2[1:40], 
+                                    use = "pairwise.complete.obs"), digit = 2))
+focus.cor2 = melt(focus.cor2)
+heatmap2 = ggplot(data = focus.cor2, aes(x=Var1, y=Var2, fill=value))
+heatmap2 = heatmap2 + 
+  geom_tile(color = "white") + 
+  scale_fill_gradient(low = "blue", high = "red")
+
+heatmap2
+```
+
+**Analysing how well participants responses in Italy predict c19ProSo03**
+
+c19ProSo03 collects the information on how willing people are to protect vulnerable 
+groups from coronavirus even at their own expense. According to the summary of the 
+fitted model using linear regression, c19NormDo appears to be the best predictor 
+for this pro social behaviour due to having the lowest p-values among the rest of 
+the potential predictors, and a strong predictor as well. affContent is the second
+best predictor after c19NormDo, and PLRAC19, fail02, fail03, edu can be considered
+as potential predictors too, but we would barely have enough evidence to prove of 
+them being strong predictors. According to the correlation heatmap, c19NormDo
+has a positive correlation to c19ProSo03.
+
+```{r focuscountry_pro3}
+#create datasets with only the predictors and one pro-social attribute each for linear modelling
+focuscountry_pro3 = select(focuscountry_data, -c(c19ProSo01, c19ProSo02, c19ProSo04))
+#create a linear regression model for all pro-social attr
+italy3.fit <-lm(c19ProSo03 ~ ., data = focuscountry_pro3, na.action = na.exclude)
+#check for significant predictors for all pro-social attitude attributes
+summary(italy3.fit)
+#plotting a correlation heatmap for c19ProSo03
+focus.cor3 = as.table(round(cor(focuscountry_pro3[1:40], 
+                                    use = "pairwise.complete.obs"), digit = 2))
+focus.cor3 = melt(focus.cor3)
+heatmap3 = ggplot(data = focus.cor3, aes(x=Var1, y=Var2, fill=value))
+heatmap3 = heatmap3 + 
+  geom_tile(color = "white") + 
+  scale_fill_gradient(low = "blue", high = "red")
+
+heatmap3
+```
+
+**Analysing how well participants responses in Italy predict c19ProSo04**
+
+c19ProSo04 collects the information on how willing people are to make personal 
+sacrifices to prevent the spread of coronavirus. According to the summary of the 
+fitted model using linear regression, fail02 and c19NormShould appears to be the 
+most significant predictors for this pro social behaviour due to having the lowest 
+p-values among the rest of the potential predictors. trustGovCtry and disc02 is 
+the second best potential predictor, and affExc, jbInsec02, c19IsStrict, MLQ can 
+be considered as potential predictors too, but we would barely have enough evidence 
+to prove of them being strong predictors. According to the correlation heatmap, 
+fail02 has a negative correlation to c19ProSo04, and positive correlation to
+c19ProSo04.
+
+```{r focuscountry_pro4}
+#create datasets with only the predictors and one pro-social attribute each for linear modelling
+focuscountry_pro4 = select(focuscountry_data, -c(c19ProSo01, c19ProSo02, c19ProSo03))
+#create a linear regression model for all pro-social attr
+italy4.fit <-lm(c19ProSo04 ~ ., data = focuscountry_pro4, na.action = na.exclude)
+#check for significant predictors for all pro-social attitude attributes
+summary(italy4.fit)
+#plotting a correlation heatmap for c19ProSo04
+focus.cor4 = as.table(round(cor(focuscountry_pro4[1:40], 
+                                    use = "pairwise.complete.obs"), digit = 2))
+focus.cor4 = melt(focus.cor4)
+heatmap4 = ggplot(data = focus.cor4, aes(x=Var1, y=Var2, fill=value))
+heatmap4 = heatmap4 + 
+  geom_tile(color = "white") + 
+  scale_fill_gradient(low = "blue", high = "red")
+
+heatmap4
+```
+
+###### **2(c)**
+
+**Analysing how well participants responses in other countries predict c19ProSo01**
+
+Predictors such as affEnerg, affExh, affInsp, PLRAC19, disc02, PFS02, fail03, 
+lifeSat, MLQ, c19NormShould, c19NormDo, c19IsOrg, trustGovState appear to be
+significant predictors for the aforementioned pro-social behaviour. affDepr,
+PLRAEco, jbInsec04, fail01, fail02, c19IsStrict, gender are the next best
+predictors with a relatively low p-value as well. 
+
+```{r othercountries_pro1}
+#create data sets with only the predictors and one pro-social attribute each for linear modelling
+othercountries_pro1 = select(othercountries_data, -c(c19ProSo02, c19ProSo03, c19ProSo04))
+#create a linear regression model for all pro-social attr
+other1.fit <-lm(c19ProSo01 ~ ., data = othercountries_pro1, na.action = na.exclude)
+#check for significant predictors for all pro-social attitude attributes
+summary(other1.fit)
+#plotting a correlation heatmap for c19ProSo01
+other.cor1 = as.table(round(cor(othercountries_pro1[1:40], 
+                                    use = "pairwise.complete.obs"), digit = 2))
+other.cor1 = melt(other.cor1)
+heatmap5 = ggplot(data = other.cor1, aes(x=Var1, y=Var2, fill=value))
+heatmap5 = heatmap5 + 
+  geom_tile(color = "white") + 
+  scale_fill_gradient(low = "blue", high = "red")
+
+heatmap5
+```
+
+**Analysing how well participants responses in other countries predict c19ProSo02**
+
+Predictors such as affAnx, affBor, affExc, affExh, affInsp, PLRAEco, disc02,
+disc03, jbInsec02, PFS01, fail01, lifeSat, MLQ, c19NormShould, c19NormDo, 
+c19IsOrg, trustGovState, age and edu are all strong predictors. jbInsec01, 
+trustGovCtry are the next best predictors. 
+
+```{r othercountries_pro2}
+#create datasets with only the predictors and one pro-social attribute each for linear modelling
+othercountries_pro2 = select(othercountries_data, -c(c19ProSo01, c19ProSo03, c19ProSo04))
+#create a linear regression model for all pro-social attr
+other2.fit <-lm(c19ProSo02 ~ ., data = othercountries_pro2, na.action = na.exclude)
+#check for significant predictors for all pro-social attitude attributes
+summary(other2.fit)
+#plotting a correlation heatmap for c19ProSo02
+other.cor2 = as.table(round(cor(othercountries_pro2[1:40], 
+                                    use = "pairwise.complete.obs"), digit = 2))
+other.cor2 = melt(other.cor2)
+heatmap6 = ggplot(data = other.cor2, aes(x=Var1, y=Var2, fill=value))
+heatmap6 = heatmap6 + 
+  geom_tile(color = "white") + 
+  scale_fill_gradient(low = "blue", high = "red")
+
+heatmap6
+```
+
+**Analysing how well participants responses in other countries predict c19ProSo03**
+
+affDepr, affExh, affInsp, PLRAC19, disc02, disc03, PFS01, fail01, fail03, lifeSat,
+MLQ, c19NormShould, c19NormDo, c19IsOrg, trustGovCtry, trustGovState, age, edu
+all appear to be significant predictors of c19ProSo03. 
+
+```{r othercountries_pro3}
+#create datasets with only the predictors and one pro-social attribute each for linear modelling
+othercountries_pro3 = select(othercountries_data, -c(c19ProSo01, c19ProSo02, c19ProSo04))
+#create a linear regression model for all pro-social attr
+other3.fit <-lm(c19ProSo03 ~ ., data = othercountries_pro3, na.action = na.exclude)
+#check for significant predictors for all pro-social attitude attributes
+summary(other3.fit)
+#plotting a correlation heatmap for c19ProSo03
+other.cor3 = as.table(round(cor(othercountries_pro3[1:40], 
+                                    use = "pairwise.complete.obs"), digit = 2))
+other.cor3 = melt(other.cor3)
+heatmap7 = ggplot(data = other.cor3, aes(x=Var1, y=Var2, fill=value))
+heatmap7 = heatmap7 + 
+  geom_tile(color = "white") + 
+  scale_fill_gradient(low = "blue", high = "red")
+
+heatmap7
+```
+
+**Analysing how well participants responses in other countries predict c19ProSo04**
+
+affExh, PLRAC19, disc02, jbInsec02, PFS02, fail01, fail02, fail03, lifeSat,
+c19NormShould, c19IsStrict, c19IsPunish, c19IsOrg, trustGovState and age are the
+most significant predictors for c19ProSo04. jbInsec01, MLQ and trustGovCtry come
+in next as best predictors.
+
+```{r othercountries_pro4}
+#create datasets with only the predictors and one pro-social attribute each for linear modelling
+othercountries_pro4 = select(othercountries_data, -c(c19ProSo01, c19ProSo02, c19ProSo03))
+#create a linear regression model for all pro-social attr
+other4.fit <-lm(c19ProSo04 ~ ., data = othercountries_pro4, na.action = na.exclude)
+#check for significant predictors for all pro-social attitude attributes
+summary(other4.fit)
+#plotting a correlation heatmap for c19ProSo02
+other.cor4 = as.table(round(cor(othercountries_pro4[1:40], 
+                                    use = "pairwise.complete.obs"), digit = 2))
+other.cor4 = melt(other.cor4)
+heatmap8 = ggplot(data = other.cor4, aes(x=Var1, y=Var2, fill=value))
+heatmap8 = heatmap8 + 
+  geom_tile(color = "white") + 
+  scale_fill_gradient(low = "blue", high = "red")
+
+heatmap8
+```
+
+**Comparing attributes that are deemed as strong predictors of pro social behaviours between other countries and focus country**
+
+**T-test for c19NormShould**
+
+c19NormShould is a strong predictor for both Italy and other countries in response
+to pro social behaviours. Test whether people in other countries believe that
+people should self isolate and engage in social distancing more than the people
+of Italy. 
+```{r hypothesis_test_c19NormShould}
+# Apply 2 sample hypothesis test
+t.test(othercountries_data$c19NormShould, focuscountry_data$c19NormShould, "greater",
+conf.level = 0.95)
+```
+From the result above, the null hypothesis is accepted, which means people of
+Italy and other countries both have the same opinion on which degree people
+should self isolate and engage in social distancing because the p-value is larger
+than 0.05.
+
+**T-test for jbInsec02**
+
+jbInsec02 appeared to be significant predictors for c19ProSo01 in Italy and 
+c19ProSo04 in other countries. Test whether the people in Italy are more certain
+that they can keep their job as compared to people in other countries.
+```{r hypothesis_test_jbInsec02}
+# Apply 2 sample hypothesis test
+t.test(othercountries_data$jbInsec02, focuscountry_data$jbInsec02, "less",
+conf.level = 0.95)
+```
+We can conclude that the null hypothesis is accepted, citizens of Italy and other
+countries have the same certainty on whether or not they are able to keep their
+jobs, as the p-value is more than 0.05.
+
+**T-test for c19NormDo**
+
+c19NormDo is another significant predictor for many pro-social behaviors. Test
+whether people in Italy believe that their community does self isolation and 
+engage in social distancing more than what people in other countries think.
+```{r hypothesis_test_c19NormDo}
+# Apply 2 sample hypothesis test
+t.test(othercountries_data$c19NormDo, focuscountry_data$c19NormDo, "less",
+conf.level = 0.95)
+```
+It is concluded that the null hypothesis is accepted, which means the people
+from both locations have the same opinion on whether societies in their respective
+countries do self isolation and engage in social distancing. This is due to the
+p-value being larger than 0.05.
+
+**T-test for PFS01**
+
+Test whether the people in other countries feel more financially strained
+compared to Italians.
+```{r hypothesis_test_PFS01}
+# Apply 2 sample hypothesis test
+t.test(othercountries_data$PFS01, focuscountry_data$PFS01, "greater",
+conf.level = 0.95)
+```
+Based on the results above, we can safely reject the null hypothesis as the 
+p-value is lesser than 0.05. This means that there is enough evidence to prove 
+that people in other countries indeed experience more financial strain as 
+compared to Italy.
+
+**T-test for fail02**
+
+fail02 asks to agree or disagree that, if one compares themselves to others in 
+their own country, their group is worse off. Test whether Italians agree to the 
+statement of fail02 more than people in other countries.
+```{r hypothesis_test_fail02}
+# Apply 2 sample hypothesis test
+t.test(focuscountry_data$fail02, othercountries_data$fail02, "greater",
+conf.level = 0.95)
+```
+We are able to deduce that the null hypothesis is rejected, where the p-value
+is lesser than 0.05, therefore there is enough evidence to prove that Italians,
+on the scale from strongly disagree to strongly agree, are leaning more towards
+the right of the scale compared to people in other countries.
+
+##### **Question 3**
+
+###### **3(a)**
+
+Indicators used: coded_country, disc01, disc02, disc03, jbInsec02, PFS01, 
+PFS02, PFS03, fail01, fail02, fail03, lifeSat, MLQ, c19NormShould, c19NormDo, 
+trustGovCtry, trustGovState, c19ProSo01, c19ProSo02, c19ProSo03, c19ProSo04
+
+```{r k-means clustering}
+#choose indicators to be part of the data used for clustering
+cluster_data = select(clean_cvbase, c(coded_country,disc01, disc02, disc03, jbInsec02, PFS01, 
+                                      PFS02, PFS03, fail01, fail02, fail03, lifeSat, MLQ, c19NormShould, 
+                                      c19NormDo, trustGovCtry, trustGovState, c19ProSo01, c19ProSo02,
+                                      c19ProSo03, c19ProSo04))
+
+#scale the data
+cluster_data = na.omit(cluster_data)
+scaled_cluster_data = scale(cluster_data[,2:21])
+
+# Applying the average silhouette score to find the optimal number of clusters
+
+# make function to get average silhouette score
+i_silhouette_score <- function(k){
+  km <- kmeans(scaled_cluster_data, centers = k, nstart=25)
+  ss <- silhouette(km$cluster, dist(scaled_cluster_data))
+  mean(ss[, 3], na.rm = TRUE)
+}
+
+#plot average silhouette score for 2-10 clusters
+k = 2:10
+avg_sil <- sapply(k, i_silhouette_score)
+plot(k, type='b', avg_sil, xlab='Number of clusters', ylab='Average Silhouette
+Scores')
+
+# 4 was chosen as the optimal number of clusters
+# performing k-means clustering
+CDkfit = kmeans(scaled_cluster_data, 4, nstart = 20)
+T1 = table(actual = cluster_data$coded_country, fitted = CDkfit$cluster)
+T1 = as.data.frame.matrix(T1)
+
+#clustering visualisation
+fviz_cluster(CDkfit, data = scaled_cluster_data,
+             palette = c("#2E9FDF", "#00AFBB", "#E7B800", "#AA336A"),
+             geom = "point",
+             ellipse.type = "convex",
+             ggtheme = theme_bw()
+             )
+```
+
+After performing clustering, Australia, Canada and Brazil can be deemed to be 
+similar to Italy in their responses towards the indicators used for clustering.
+This is because all 4 countries had the majority of observations clustered into
+group 3, with the total respondant size being a similar sizes as well (between
+400 to 700).
+
+###### **3(b)**
+
+```{r cluster_grouping}
+temp1 <- clean_cvbase[(clean_cvbase$coded_country == "Australia"),]
+temp2 <- clean_cvbase[(clean_cvbase$coded_country == "Brazil"),]
+temp3 <- clean_cvbase[(clean_cvbase$coded_country == "Canada"),]
+clustercountry_data <- rbind(temp1, temp2, temp3)
+rownames(clustercountry_data) <- 1:nrow(clustercountry_data)
+```
+
+**Analysing how well participants responses in cluster countries predict c19ProSo01**
+
+According to the summary of the fitted model using linear regression, jbInsec02 
+and c19NormShould appears to be the best predictors for this pro social behaviour 
+due to having the lowest p-values among the rest of the potential predictors.
+
+```{r clustercountry_pro1}
+#create data sets with only the predictors and one pro-social attribute each for linear modelling
+clustercountries_pro1 = select(clustercountry_data, -c(c19ProSo02, c19ProSo03, c19ProSo04))
+#create a linear regression model for all pro-social attr
+cluster1.fit <-lm(c19ProSo01 ~ ., data = focuscountry_pro1, na.action = na.exclude)
+#check for significant predictors for all pro-social attitude attributes
+summary(cluster1.fit)
+```
+
+**Analysing how well participants responses in cluster countries predict c19ProSo02**
+
+According to the summary of the fitted model using linear regression, c19NormShould 
+and PFS01 appears to be the best predictors for this pro social behaviour due to 
+having the lowest p-values among the rest of the potential predictors.
+
+```{r clustercountry_pro2}
+#create data sets with only the predictors and one pro-social attribute each for linear modelling
+clustercountries_pro2 = select(clustercountry_data, -c(c19ProSo01, c19ProSo03, c19ProSo04))
+#create a linear regression model for all pro-social attr
+cluster2.fit <-lm(c19ProSo02 ~ ., data = focuscountry_pro2, na.action = na.exclude)
+#check for significant predictors for all pro-social attitude attributes
+summary(cluster2.fit)
+```
+
+**Analysing how well participants responses in cluster countries predict c19ProSo03**
+
+According to the summary of the fitted model using linear regression, c19NormDo 
+appears to be the best predictors for this pro social behaviour due to having the 
+lowest p-values among the rest of the potential predictors. The next best predictor
+is affContent.
+
+```{r clustercountry_pro3}
+#create data sets with only the predictors and one pro-social attribute each for linear modelling
+clustercountries_pro3 = select(clustercountry_data, -c(c19ProSo01, c19ProSo02, c19ProSo04))
+#create a linear regression model for all pro-social attr
+cluster3.fit <-lm(c19ProSo03 ~ ., data = focuscountry_pro3, na.action = na.exclude)
+#check for significant predictors for all pro-social attitude attributes
+summary(cluster3.fit)
+```
+
+**Analysing how well participants responses in cluster countries predict c19ProSo04**
+
+According to the summary of the fitted model using linear regression, fail02 
+and c19NormShould appears to be the most significant predictors for this pro 
+social behaviour. 
+
+```{r clustercountry_pro4}
+#create data sets with only the predictors and one pro-social attribute each for linear modelling
+clustercountries_pro4 = select(clustercountry_data, -c(c19ProSo01, c19ProSo02, c19ProSo03))
+#create a linear regression model for all pro-social attr
+cluster4.fit <-lm(c19ProSo04 ~ ., data = focuscountry_pro4, na.action = na.exclude)
+#check for significant predictors for all pro-social attitude attributes
+summary(cluster4.fit)
+```
+
+**T-test for jbInsec02**
+
+jbInsec02 appeared to be significant predictors for c19ProSo01 in Italy and 
+cluster countries as well. Test whether the people in Italy are more certain
+that they can keep their job as compared to people in cluster countries.
+```{r hypothesis_test_jbInsec02_cluster}
+# Apply 2 sample hypothesis test
+t.test(clustercountry_data$jbInsec02, focuscountry_data$jbInsec02, "less",
+conf.level = 0.95)
+```
+We can conclude that the null hypothesis is accepted, citizens of Italy and cluster
+countries have the same certainty on whether or not they are able to keep their
+jobs, as the p-value is more than 0.05.
+
+**T-test for c19NormShould**
+
+Test whether people in cluster countries believe that people should self isolate 
+and engage in social distancing more than the people of Italy. 
+```{r hypothesis_test_c19NormShould_cluster}
+# Apply 2 sample hypothesis test
+t.test(clustercountry_data$c19NormShould, focuscountry_data$c19NormShould, "greater",
+conf.level = 0.95)
+```
+From the result above, there is enough evidence to reject the null hypothesis as
+the p-value is smaller than 0.05. This means people of the cluster countries do
+believe more that people should self isolate and engage in social distancing than
+Italians.
+
+**T-test for PFS01**
+
+Test whether the people in cluster countries feel more financially strained
+compared to Italians.
+```{r hypothesis_test_PFS01_cluster}
+# Apply 2 sample hypothesis test
+t.test(clustercountry_data$PFS01, focuscountry_data$PFS01, "greater",
+conf.level = 0.95)
+```
+Based on the results above, we can safely reject the null hypothesis as the 
+p-value is lesser than 0.05. This means that there is enough evidence to prove 
+that people in cluster countries indeed experience more financial strain as 
+compared to Italy.
+
+**T-test for c19NormDo**
+
+Test whether people in Italy believe that their community does self isolation and 
+engage in social distancing more than what people in cluster countries think.
+```{r hypothesis_test_c19NormDo_cluster}
+# Apply 2 sample hypothesis test
+t.test(clustercountry_data$c19NormDo, focuscountry_data$c19NormDo, "less",
+conf.level = 0.95)
+```
+It is concluded that the null hypothesis is accepted, which means the people
+from both locations have the same opinion on whether societies in their respective
+countries do self isolation and engage in social distancing. This is due to the
+p-value being larger than 0.05.
+
+**T-test for fail02**
+
+fail02 asks to agree or disagree that, if one compares themselves to others in 
+their own country, their group is worse off. Test whether Italians agree to the 
+statement of fail02 more than people in cluster countries.
+```{r hypothesis_test_fail02_cluster}
+# Apply 2 sample hypothesis test
+t.test(focuscountry_data$fail02, clustercountry_data$fail02, "greater",
+conf.level = 0.95)
+```
+We are able to deduce that the null hypothesis is rejected, where the p-value
+is lesser than 0.05, therefore there is enough evidence to prove that Italians,
+on the scale from strongly disagree to strongly agree, are leaning more towards
+the right of the scale compared to people in cluster countries.
+
+**Discussion**
+
+After analysing the best predictors for the cluster countries, it is found that
+these predictors are the most significant predictors for focus country (Italy)
+in regards to every pro social behaviour as well. The comparison of predictors
+between Italy vs other countries and Italy vs cluster countries have resulted
+to the same outcome, except for c19NormShould where there was indeed a difference
+in responses between the focus country and the cluster countries. In summary, the
+attributes predicted as significant predictors are definitely a better match to
+project pro social behaviours in the focus country Italy as they are a total
+match. 
+
+#### **Appendix**
+
+*Assumption #1*
+
+Every record is deemed to have NA values as the attributes that involve employment 
+status is not meant to be filled up entirely, for example some people may be 
+students,hence they are unemployed, whereas working individuals will choose the 
+choices with employment involved.
+
+*R packages used*
+
+- ggplot2
+- dplyr
+- tidyr
+- factoextra
+
+*R libraries loaded*
+
+- ggplot2
+- tidyr
+- dplyr
+- reshape2 
+- cluster
+- factoextra
+
+
+
+
